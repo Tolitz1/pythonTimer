@@ -11,17 +11,28 @@ from datetime import datetime
 import win32event
 import win32api
 import winerror
-import time
+import win32con
 
-# Mutex name for single instance
+# ---------------- Single instance & Event ----------------
 mutex_name = "AlvinTimerSingletonMutex"
+event_name = "AlvinTimerShowWindowEvent"
+
 mutex = win32event.CreateMutex(None, False, mutex_name)
 last_error = win32api.GetLastError()
 if last_error == winerror.ERROR_ALREADY_EXISTS:
-    print("Another instance is already running. Exiting...")
+    # Another instance exists → signal it to show window
+    try:
+        hEvent = win32event.OpenEvent(win32con.EVENT_MODIFY_STATE, False, event_name)
+        if hEvent:
+            win32event.SetEvent(hEvent)
+    except Exception as e:
+        print("Failed to signal existing instance:", e)
     sys.exit(0)
 
-# Globals
+# Create event for this instance
+hEvent = win32event.CreateEvent(None, False, False, event_name)
+
+# ---------------- Globals ----------------
 countdown_seconds = 0
 original_seconds = 0
 is_running = False
@@ -35,7 +46,7 @@ STATE_FILE = os.path.join(APPDATA_DIR, "timer_state.json")
 
 RESET_PASSWORD = "1234"  # Password for reset button
 
-# ------------- Utility functions -------------
+# ---------------- Utility functions ----------------
 def sanitize_input(event=None):
     raw = ''.join(filter(str.isdigit, entry.get()))[:6]
     raw = raw.zfill(6)
@@ -54,7 +65,7 @@ def seconds_to_hms(seconds):
     s = seconds % 60
     return f"{h:02d}:{m:02d}:{s:02d}"
 
-# ------------- Timer functions -------------
+# ---------------- Timer functions ----------------
 def start_timer():
     global countdown_seconds, original_seconds, is_running, start_timestamp
 
@@ -83,7 +94,6 @@ def update_timer():
     if not is_running:
         return
 
-    # Calculate elapsed time
     elapsed = int((datetime.now() - start_timestamp).total_seconds())
     remaining = original_seconds - elapsed
     if remaining < 0:
@@ -110,7 +120,6 @@ def add_time(seconds):
     global countdown_seconds, original_seconds, start_timestamp
 
     if is_running:
-        # Adjust original_seconds and restart timestamp accordingly
         elapsed = int((datetime.now() - start_timestamp).total_seconds())
         countdown_seconds = original_seconds - elapsed + seconds
         if countdown_seconds < 0:
@@ -170,7 +179,7 @@ def prompt_password_and_show_reset():
     else:
         messagebox.showerror("Access Denied", "Incorrect password.")
 
-# ------------- System Tray -------------
+# ---------------- System Tray ----------------
 def create_image():
     image = Image.new('RGB', (64, 64), color='black')
     dc = ImageDraw.Draw(image)
@@ -182,30 +191,31 @@ def create_image():
 def on_quit(icon, item):
     icon.visible = False
     icon.stop()
-    root.after(0, root.destroy)
-    sys.exit(0)
+    root.after(0, root.quit)  # clean exit
 
 def show_window(icon, item):
-    icon.visible = False
-    icon.stop()
     root.after(0, root.deiconify)
 
 def minimize_to_tray():
     save_state()
     root.withdraw()
+    if icon is not None:
+        icon.visible = True
+
+def tray_loop():
+    global icon
     image = create_image()
     menu = pystray.Menu(
         pystray.MenuItem('Open Timer', show_window),
         pystray.MenuItem('Quit', on_quit)
     )
-    global icon
     icon = pystray.Icon("timer_app", image, "Smart Countdown Timer", menu)
     icon.run()
 
 def on_closing():
-    threading.Thread(target=minimize_to_tray, daemon=True).start()
+    minimize_to_tray()
 
-# ------------- Save/load state -------------
+# ---------------- Save/load state ----------------
 def save_state():
     if not is_running:
         delete_state()
@@ -259,8 +269,6 @@ def load_state():
 
         label.config(text=seconds_to_hms(countdown_seconds))
         update_progress()
-        # Start update loop
-        global root
         root.after(1000, update_timer)
 
     except Exception as e:
@@ -273,7 +281,7 @@ def delete_state():
         except Exception as e:
             print("Failed to delete state:", e)
 
-# ------------- UI Setup -------------
+# ---------------- UI Setup ----------------
 root = tk.Tk()
 root.title("Alvin Timer")
 root.geometry("400x330")
@@ -311,6 +319,20 @@ back_btn = tk.Button(root, text="← Back", font=("Arial", 14), command=back_to_
 
 root.protocol("WM_DELETE_WINDOW", on_closing)
 
+# Start tray once
+threading.Thread(target=tray_loop, daemon=True).start()
+
+# Listen for "show window" event from second instance
+def listen_for_show_event():
+    while True:
+        win32event.WaitForSingleObject(hEvent, win32event.INFINITE)
+        root.after(0, root.deiconify)
+
+threading.Thread(target=listen_for_show_event, daemon=True).start()
+
 load_state()
 
 root.mainloop()
+
+# Release mutex on exit
+win32event.ReleaseMutex(mutex)

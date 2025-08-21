@@ -12,6 +12,8 @@ import win32event
 import win32api
 import winerror
 import win32con
+import win32security
+import getpass
 
 # ---------------- Single instance & Event ----------------
 mutex_name = "AlvinTimerSingletonMutex"
@@ -43,8 +45,6 @@ APP_NAME = "AlvinTimer"
 APPDATA_DIR = os.path.join(os.getenv("APPDATA"), APP_NAME)
 os.makedirs(APPDATA_DIR, exist_ok=True)
 STATE_FILE = os.path.join(APPDATA_DIR, "timer_state.json")
-
-RESET_PASSWORD = "1234"  # Password for reset button
 
 # ---------------- Utility functions ----------------
 def sanitize_input(event=None):
@@ -168,16 +168,33 @@ def back_to_setup():
     progress_bar['value'] = 0
     delete_state()
 
+# ---------------- Windows password check ----------------
+def check_windows_password(username, password, domain="."):
+    try:
+        handle = win32security.LogonUser(
+            username,
+            domain,
+            password,
+            win32con.LOGON32_LOGON_INTERACTIVE,
+            win32con.LOGON32_PROVIDER_DEFAULT
+        )
+        handle.Close()
+        return True
+    except Exception:
+        return False
+
 def prompt_password_and_show_reset():
-    pw = simpledialog.askstring("Password Required", "Enter password to enable Reset:", show="*")
-    if pw == RESET_PASSWORD:
+    pw = simpledialog.askstring("Password Required", "Enter your Windows password:", show="*")
+    if pw is None:
+        return  # cancelled
+
+    username = getpass.getuser()  # current logged in username
+    if check_windows_password(username, pw):
         messagebox.showinfo("Access Granted", "Reset enabled.")
         show_reset_btn.pack_forget()
         reset_btn.pack(pady=5)
-    elif pw is None:
-        pass
     else:
-        messagebox.showerror("Access Denied", "Incorrect password.")
+        messagebox.showerror("Access Denied", "Incorrect Windows password.")
 
 # ---------------- System Tray ----------------
 def create_image():

@@ -88,8 +88,11 @@ def start_timer():
     start_timestamp = datetime.now()
     update_timer()
 
+# Add a global set to avoid duplicate warnings
+warned_times = set()
+
 def update_timer():
-    global countdown_seconds, is_running, start_timestamp
+    global countdown_seconds, is_running, start_timestamp, warned_times
 
     if not is_running:
         return
@@ -105,6 +108,13 @@ def update_timer():
     update_progress()
     save_state()
 
+    # 🚨 New: Popup when 15 minutes or 5 minutes left
+    if countdown_seconds in (900, 300) and countdown_seconds not in warned_times:
+        warned_times.add(countdown_seconds)
+        root.after(0, lambda r=remaining: messagebox.showwarning(
+            "Time Warning", f"⏳ Only {seconds_to_hms(r)} remaining!"
+        ))
+
     if countdown_seconds == 0:
         label.config(text="Time's up!")
         lock_windows()
@@ -115,6 +125,7 @@ def update_timer():
         delete_state()
     else:
         root.after(1000, update_timer)
+
 
 def add_time(seconds):
     global countdown_seconds, original_seconds, start_timestamp
@@ -298,6 +309,12 @@ def delete_state():
         except Exception as e:
             print("Failed to delete state:", e)
 
+def show_warning():
+    if is_running:
+        remaining_time = seconds_to_hms(countdown_seconds)
+        messagebox.showwarning("Time Warning", f"⏳ Time remaining: {remaining_time}")
+    else:
+        messagebox.showwarning("Time Warning", "⚠️ Timer is not running.")
 # ---------------- UI Setup ----------------
 root = tk.Tk()
 root.title("Alvin Timer")
